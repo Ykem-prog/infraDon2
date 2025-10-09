@@ -1,0 +1,22 @@
+{
+  "personnes": [
+    {
+      "nom": "Dupont",
+      "prenom": "Alice",
+      "age": 28,
+      "email": "alice.dupont@example.com"
+    },
+    {
+      "nom": "Martin",
+      "prenom": "Bob",
+      "age": 35,
+      "email": "bob.martin@example.com"
+    },
+    {
+      "nom": "Durand",
+      "prenom": "Claire",
+      "age": 22,
+      "email": "claire.durand@example.com"
+    }
+  ]
+}
