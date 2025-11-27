@@ -1,11 +1,9 @@
 <script setup lang="ts">
-
 import { ref, onMounted } from 'vue';
 import PouchDB from 'pouchdb';
 import PouchDBFind from 'pouchdb-find';
 
 PouchDB.plugin(PouchDBFind);
-
 
 interface Post {
   _conflicts: any | null; 
@@ -13,15 +11,43 @@ interface Post {
   _rev: string;
   title: string;
   content: string;
+  likes: number;
   attributes: {
     creation_date: any;
   };
 }
 
+const batchSize = ref(10);
 const storage = ref<PouchDB.Database | null>(null);
 const postsData = ref<Post[]>([]);
 const sync = ref<PouchDB.Replication.Replication<Post> | null>(null);
 const isOnline = ref(false);
+
+const addLike = async (post: Post) => {
+    if (!storage.value) return;
+
+   
+    const newLikes = (post.likes || 0) + 1;
+
+    const updatedPost = {
+        ...post,
+        likes: newLikes,
+        _rev: post._rev 
+    };
+
+    try {
+        const response = await storage.value.put(updatedPost);
+        fetchData(); 
+        console.log('Like ajouté', response);
+    } catch (err) {
+        if ((err as PouchDB.Core.Error).name === 'conflict') {
+            console.error('Erreur de conflit lors du like. Récupération...', err);
+            fetchData(); 
+        } else {
+            console.log('Erreur lors du like', err);
+        }
+    }
+};
 
 onMounted(() => {
   console.log('=> Composant initialisé');
@@ -53,16 +79,13 @@ const initDatabase = async () => {
         } catch (error) {
             console.error('Erreur lors de la création de l\'index', error);
         }
-
         
         try {
-           
             await localdb.replicate.from('http://ykem:Salutpoilu99$@localhost:5984/infradon2');
             console.log('Réplication initiale terminée.');
         } catch (error) {
             console.warn('Erreur lors de la réplication initiale (CouchDB est-il démarré ?)', (error as Error).message);
         } finally {
-      
             syncData();
             fetchData();
         }
@@ -75,7 +98,6 @@ const syncData = () => {
     if (storage.value) {
         console.log('Lancement de la synchronisation live...');
         isOnline.value = true;
-        
         
         if (sync.value) sync.value.cancel();
 
@@ -90,9 +112,7 @@ const syncData = () => {
                 console.error("Accès à CouchDB refusé", err);
                 isOnline.value = false;
             })
-           
             .on('paused', () => { 
-               
                 isOnline.value = true;
             })
             .on('active', () => {
@@ -117,7 +137,6 @@ const toggle = () => {
 };
 
 const search = async (event: Event) => {
-   
     const query = (event.target as HTMLInputElement).value;
     (event.target as HTMLInputElement).blur();
 
@@ -127,10 +146,9 @@ const search = async (event: Event) => {
         try {
             const result = await storage.value.find({
                 selector: {
-                    
                     content: { '$regex': `.*${query}.*` }
                 },
-                fields: ['_id', '_rev', 'title', 'content', '_conflicts']
+                fields: ['_id', '_rev', 'title', 'content', 'likes', '_conflicts']
             });
             
             console.log('=> Données filtrées :', result.docs);
@@ -142,7 +160,6 @@ const search = async (event: Event) => {
 };
 
 const searchReset = () => {
-    
     const searchInput = document.querySelector('.search') as HTMLInputElement;
     if (searchInput) {
         searchInput.value = '';
@@ -173,6 +190,7 @@ const createDoc = async () => {
         const response = await storage.value.post({
             title: 'Document ' + counter,
             content: 'Contenu du document : ' + words[Math.floor(Math.random() * words.length)],
+            likes: 0, 
             attributes: {
                 creation_date: new Date().toISOString()
             }
@@ -195,6 +213,32 @@ const deleteDoc = async (post: Post) => {
     }
 };
 
+const createMultipleDocs = async () => {
+    if (!storage.value) return;
+    const numToCreate = parseInt(batchSize.value.toString()) || 0;
+    
+    if (numToCreate > 0) {
+        const docs = [];
+        for(let i=0; i<numToCreate; i++) {
+            counter++;
+            docs.push({
+                title: 'Document ' + counter,
+                content: 'Contenu du document : ' + words[Math.floor(Math.random() * words.length)],
+                likes: 0,
+                attributes: {
+                    creation_date: new Date().toISOString()
+                }
+            });
+        }
+        try {
+            await storage.value.bulkDocs(docs);
+            fetchData();
+        } catch(err) {
+             console.log('Erreur création multiple', err);
+        }
+    }
+};
+
 const updateDoc = async (post: Post) => {
     if (!storage.value) return;
     const newContent = 'Contenu du document : ' + words[Math.floor(Math.random() * words.length)] + ' (modifié)';
@@ -206,7 +250,6 @@ const updateDoc = async (post: Post) => {
     
     try {
         const response = await storage.value.put(updatedPost);
-      
         fetchData(); 
         console.log('Document mis à jour', response);
     } catch (err) {
@@ -225,7 +268,6 @@ const updateDoc = async (post: Post) => {
     <div id="app-container">
         <h1>Gestion des Documents (PouchDB Sync)</h1>
         
-        <!-- Toggle et statut -->
         <div class="header-actions">
             <div class="status-toggle">
                 <label class="switch">
@@ -239,13 +281,11 @@ const updateDoc = async (post: Post) => {
             <button @click="createDoc" class="btn-primary">Ajouter un document</button>
         </div>
         
-        <!-- Recherche -->
         <div class="search-container">
             <input type="text" placeholder="Rechercher par contenu (Entrée)" @keyup.enter="search" class="search" />
             <button @click="searchReset" class="btn-reset">X</button>
         </div>
-        
-        <!-- Liste des documents -->
+
         <div class="document-list">
             <article v-for="post in postsData" :key="post._id">
                 <div class="article-content">
@@ -255,8 +295,12 @@ const updateDoc = async (post: Post) => {
                     </h2>
                     <p>{{ post.content }}</p>
                 </div>
-                
+
                 <div class="article-actions">
+                    <button @click="addLike(post)" class="btn-like">
+                        ❤️ {{ post.likes || 0 }}
+                    </button>
+
                     <button @click="updateDoc(post)" class="btn-update">Modifier</button>
                     <button @click="deleteDoc(post)" class="btn-delete">Effacer</button>
                 </div>
@@ -310,12 +354,10 @@ h1 {
 }
 .status-online {
     color: #059669; /* Green */
-    /* background-color: #d1fae5; */
     font-weight: 600;
 }
 .status-offline {
     color: #dc2626; /* Red */
-    /* background-color: #fee2e2; */
     font-weight: 600;
 }
 
@@ -365,12 +407,11 @@ button {
     width: 40px;
     height: 40px;
     line-height: 1;
-    font-size: 1rem; /* Rendre le X plus visible */
+    font-size: 1rem;
 }
 .btn-reset:hover {
     background-color: #d1d5db;
 }
-
 
 /* Liste des documents */
 .document-list {
@@ -390,19 +431,6 @@ article {
     align-items: center;
     gap: 1rem;
 }
-
-/* Rendre la carte responsive sur mobile */
-/* @media (max-width: 600px) {
-    article {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-    .article-actions {
-        margin-top: 1rem;
-        width: 100%;
-        justify-content: flex-start;
-    }
-} */
 
 .article-content {
     flex-grow: 5;
@@ -441,6 +469,21 @@ article p {
 }
 .btn-delete:hover {
     background-color: #dc2626;
+}
+
+/* Style du bouton Like */
+.btn-like {
+ background-color: #ef476f;
+ color: white;
+ padding: 0.5rem 1rem;
+ min-width: 80px;
+}
+.btn-like:hover {
+ background-color: #d8315b;
+}
+.btn-like:active {
+ background-color: #be123c; /* Petit effet visuel au clic */
+ transform: scale(0.95);
 }
 
 /* Conflicts */
