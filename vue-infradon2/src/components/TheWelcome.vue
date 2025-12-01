@@ -1,556 +1,503 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
-import PouchDB from 'pouchdb';
-import PouchDBFind from 'pouchdb-find';
+import { ref, onMounted } from 'vue'
+import PouchDB from 'pouchdb'
+import PouchDBFind from 'pouchdb-find'
 
-PouchDB.plugin(PouchDBFind);
+PouchDB.plugin(PouchDBFind)
+
+
 
 interface Post {
-  _conflicts: any | null; 
-  _id: string;
-  _rev: string;
-  title: string;
-  content: string;
-  likes: number;
-  attributes: {
-    creation_date: any;
-  };
+  _id: string
+  _rev: string
+  _conflicts?: any
+  type?: 'post'
+  title: string
+  content: string
+  likes: number
+  attributes?: {
+    creation_date: any
+  }
 }
 
-const batchSize = ref(10);
-const storage = ref<PouchDB.Database | null>(null);
-const postsData = ref<Post[]>([]);
-const sync = ref<PouchDB.Replication.Replication<Post> | null>(null);
-const isOnline = ref(false);
+interface Plat {
+  _id: string
+  _rev: string
+  _conflicts?: any
+  type: 'plat'
+  nom: string
+  prix: number
+  ingredients: string
+  client: string
+  likes: number
+}
 
-const addLike = async (post: Post) => {
-    if (!storage.value) return;
 
-   
-    const newLikes = (post.likes || 0) + 1;
 
-    const updatedPost = {
-        ...post,
-        likes: newLikes,
-        _rev: post._rev 
-    };
+const batchSize = ref(10)
+const storage = ref<PouchDB.Database | null>(null)
+const sync = ref<PouchDB.Replication.Replication<Post> | null>(null)
+const isOnline = ref(false)
 
-    try {
-        const response = await storage.value.put(updatedPost);
-        fetchData(); 
-        console.log('Like ajouté', response);
-    } catch (err) {
-        if ((err as PouchDB.Core.Error).name === 'conflict') {
-            console.error('Erreur de conflit lors du like. Récupération...', err);
-            fetchData(); 
-        } else {
-            console.log('Erreur lors du like', err);
-        }
-    }
-};
+const postsData = ref<Post[]>([])
+const platsData = ref<Plat[]>([])
+
+
+
+const words = ['Léa', 'Inoé', 'Camilo', 'Teicir', 'Yannis', 'Elia', 'Loann', 'Sasita', 'Sarah']
+
+const clientsPotentiels = [
+  'Léa', 'Inoé', 'Camilo', 'Teicir', 'Yannis', 'Elia', 'Loann', 'Sasita', 
+  'Sarah', 'Enya', 'Gabriel', 'Nuno', 'Tanguy', 'Loic', 'Dylan', 'Liliana', 'Thierry'
+]
+
+const nomsPlats = [
+  'Pizza Margherita', 'Burger Royal', 'Sushi Mix', 'Salade César', 
+  'Pâtes Carbo', 'Tacos XL', 'Curry Vert', 'Risotto Champignons', 'Poke Bowl'
+]
+
+const ingredientsList = [
+  'Tomate', 'Mozzarella', 'Basilic', 'Poulet', 'Curry', 
+  'Riz', 'Saumon', 'Avocat', 'Piment', 'Fromage', 'Bacon'
+]
+
+
 
 onMounted(() => {
-  console.log('=> Composant initialisé');
-  initDatabase();
-});
-
-let counter = 0; 
-const words = [
-    'léa', 'inoé', 'camilo', 'teicir', 'yannis', 'elia', 'loann', 'sasita',
-    'sarah', 'enya', 'gabriel', 'nuno', 'tanguy', 'loic', 'dylan', 'liliana',
-    'thierry', 'valentin', 'benoît', 'chloé',
-];
+  console.log('=> Composant initialisé')
+  initDatabase()
+})
 
 const initDatabase = async () => {
-    console.log('=> Connexion à la base de données');
-    const localdb = new PouchDB('collection_infradon2');
-    
-    if (localdb) {
-        console.log('Connected to collection : ' + localdb.name);
-        storage.value = localdb;
-        
-        try {
-            await storage.value.createIndex({
-                index: {
-                    fields: ['content'],
-                },
-            });
-            console.log('Index créé');
-        } catch (error) {
-            console.error('Erreur lors de la création de l\'index', error);
-        }
-        
-        try {
-            await localdb.replicate.from('http://ykem:Salutpoilu99$@localhost:5984/infradon2');
-            console.log('Réplication initiale terminée.');
-        } catch (error) {
-            console.warn('Erreur lors de la réplication initiale (CouchDB est-il démarré ?)', (error as Error).message);
-        } finally {
-            syncData();
-            fetchData();
-        }
-    } else {
-        console.warn('Something went wrong');
+  console.log('=> Connexion à la base de données')
+  const localdb = new PouchDB('collection_infradon2')
+
+  if (localdb) {
+    storage.value = localdb
+    console.log('Connected to collection : ' + localdb.name)
+
+    try {
+      await storage.value.createIndex({
+        index: { fields: ['type'] },
+      })
+    } catch (error) { console.error("Erreur index", error) }
+
+    try {
+      await localdb.replicate.from('http://ykem:Salutpoilu99$@localhost:5984/infradon2')
+      console.log('Réplication initiale terminée.')
+    } catch (error) {
+      console.warn('Erreur réplication initiale (CouchDB offline ?)', (error as Error).message)
+    } finally {
+      syncData()
+      fetchData()
     }
-};
+  }
+}
+
+
 
 const syncData = () => {
-    if (storage.value) {
-        console.log('Lancement de la synchronisation live...');
-        isOnline.value = true;
-        
-        if (sync.value) sync.value.cancel();
+  if (storage.value) {
+    isOnline.value = true
+    if (sync.value) sync.value.cancel()
 
-        sync.value = storage.value
-            .sync('http://ykem:Salutpoilu99$@localhost:5984/infradon2', { live: true, retry: true })
-            .on('change', fetchData)
-            .on('error', (err) => {
-                console.error("Erreur de synchronisation", err);
-                isOnline.value = false;
-            })
-            .on('denied', (err) => {
-                console.error("Accès à CouchDB refusé", err);
-                isOnline.value = false;
-            })
-            .on('paused', () => { 
-                isOnline.value = true;
-            })
-            .on('active', () => {
-                isOnline.value = true;
-            })
-            .on('complete', (info) => {
-                console.log('Synchronisation interrompue par la fin de la source.', info);
-                isOnline.value = false;
-            });
-    }
-};
+    sync.value = storage.value
+      .sync('http://ykem:Salutpoilu99$@localhost:5984/infradon2', { live: true, retry: true })
+      .on('change', fetchData)
+      .on('error', () => (isOnline.value = false))
+      .on('paused', () => (isOnline.value = true))
+      .on('active', () => (isOnline.value = true))
+  }
+}
 
 const toggle = () => {
-    if (sync.value) {
-        console.log('Synchronisation arrêtée');
-        sync.value.cancel();
-        sync.value = null;
-        isOnline.value = false;
-    } else {
-        syncData();
-    }
-};
+  if (sync.value) {
+    sync.value.cancel()
+    sync.value = null
+    isOnline.value = false
+  } else {
+    syncData()
+  }
+}
 
-const search = async (event: Event) => {
-    const query = (event.target as HTMLInputElement).value;
-    (event.target as HTMLInputElement).blur();
 
-    if (query === '') {
-        fetchData();
-    } else if (storage.value) {
-        try {
-            const result = await storage.value.find({
-                selector: {
-                    content: { '$regex': `.*${query}.*` }
-                },
-                fields: ['_id', '_rev', 'title', 'content', 'likes', '_conflicts']
-            });
-            
-            console.log('=> Données filtrées :', result.docs);
-            postsData.value = result.docs as Post[];
-        } catch (error) {
-            console.error('Erreur lors de la récupération des données :', error);
-        }
-    }
-};
-
-const searchReset = () => {
-    const searchInput = document.querySelector('.search') as HTMLInputElement;
-    if (searchInput) {
-        searchInput.value = '';
-    }
-    fetchData();
-};
 
 const fetchData = async () => {
-    if (!storage.value) return; 
+  if (!storage.value) return
 
-    try {
-        const result = await storage.value.allDocs({
-            include_docs: true,
-            conflicts: true,
-        });
-        
-        console.log('=> Données récupérées (allDocs) :', result.rows);
-        postsData.value = result.rows.map((row: PouchDB.Core.GetResult<Post>) => row.doc) as Post[];
-    } catch (error) {
-        console.error('Erreur lors de la récupération des données :', error);
+  try {
+    const result = await storage.value.allDocs({
+      include_docs: true,
+      conflicts: true,
+    })
+
+    const allDocs = result.rows
+      .map((row: any) => row.doc)
+      .filter((doc: any) => !doc._id.startsWith('_'))
+
+   
+    
+    platsData.value = (allDocs.filter((doc: any) => doc.type === 'plat') as Plat[])
+      .sort((a, b) => (b.likes || 0) - (a.likes || 0))
+
+    postsData.value = (allDocs.filter((doc: any) => doc.type === 'post' || !doc.type) as Post[])
+      .sort((a, b) => (b.likes || 0) - (a.likes || 0))
+
+  } catch (error) {
+    console.error('Erreur fetch :', error)
+  }
+}
+
+
+
+const search = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const query = input.value.toLowerCase().trim()
+  input.blur()
+
+  if (query === '') {
+    fetchData()
+    return
+  }
+
+  if (!storage.value) return
+
+  try {
+    const result = await storage.value.allDocs({
+      include_docs: true,
+      conflicts: true,
+    })
+
+    const allDocs = result.rows
+      .map((row: any) => row.doc)
+      .filter((doc: any) => !doc._id.startsWith('_'))
+
+    
+    postsData.value = (allDocs.filter((doc: any) => doc.type === 'post' || !doc.type) as Post[])
+      .filter(post => 
+        (post.title && post.title.toLowerCase().includes(query)) || 
+        (post.content && post.content.toLowerCase().includes(query))
+      )
+      .sort((a, b) => (b.likes || 0) - (a.likes || 0))
+
+    
+    platsData.value = (allDocs.filter((doc: any) => doc.type === 'plat') as Plat[])
+      .filter(plat => 
+        (plat.nom && plat.nom.toLowerCase().includes(query)) || 
+        (plat.client && plat.client.toLowerCase().includes(query)) ||
+        (plat.ingredients && plat.ingredients.toLowerCase().includes(query))
+      )
+      .sort((a, b) => (b.likes || 0) - (a.likes || 0))
+
+  } catch (error) {
+    console.error('Erreur recherche', error)
+  }
+}
+
+const searchReset = () => {
+  const el = document.querySelector('.search') as HTMLInputElement
+  if(el) el.value = ''
+  fetchData()
+}
+
+
+
+const createPlat = async () => {
+  if (!storage.value) return
+  
+  const nomPlat = nomsPlats[Math.floor(Math.random() * nomsPlats.length)]
+  const clientRandom = clientsPotentiels[Math.floor(Math.random() * clientsPotentiels.length)]
+  const ingr = ingredientsList[Math.floor(Math.random() * ingredientsList.length)]
+
+  try {
+    await storage.value.post({
+      type: 'plat',
+      nom: nomPlat,
+      client: clientRandom,
+      ingredients: ingr,
+      prix: Math.floor(Math.random() * 20) + 10,
+      likes: 0
+    })
+    fetchData()
+  } catch (err) { console.log(err) }
+}
+
+const createMultiplePlats = async () => {
+  if (!storage.value) return
+  const numToCreate = parseInt(batchSize.value.toString()) || 0
+  
+  if (numToCreate > 0) {
+    const plats = []
+    for (let i = 0; i < numToCreate; i++) {
+      plats.push({
+        type: 'plat',
+        nom: nomsPlats[Math.floor(Math.random() * nomsPlats.length)],
+        client: clientsPotentiels[Math.floor(Math.random() * clientsPotentiels.length)],
+        ingredients: ingredientsList[Math.floor(Math.random() * ingredientsList.length)],
+        prix: Math.floor(Math.random() * 20) + 10,
+        likes: 0
+      })
     }
-};
+    try {
+      await storage.value.bulkDocs(plats)
+      fetchData()
+    } catch (err) { console.log(err) }
+  }
+}
+
+const updatePlat = async (plat: Plat) => {
+  if (!storage.value) return
+
+  const nouveauNom = nomsPlats[Math.floor(Math.random() * nomsPlats.length)]
+  const nouveauClient = clientsPotentiels[Math.floor(Math.random() * clientsPotentiels.length)]
+  const nouvelIngr = ingredientsList[Math.floor(Math.random() * ingredientsList.length)]
+  const nouveauPrix = Math.floor(Math.random() * 30) + 5
+
+  try {
+    await storage.value.put({
+      ...plat,
+      nom: nouveauNom,
+      client: nouveauClient,
+      ingredients: nouvelIngr,
+      prix: nouveauPrix,
+      _rev: plat._rev,
+    })
+    fetchData()
+  } catch (err) { fetchData() }
+}
+
+const addLikePlat = async (plat: Plat) => {
+  if (!storage.value) return
+  try {
+    await storage.value.put({
+      ...plat,
+      likes: (plat.likes || 0) + 1,
+      _rev: plat._rev,
+    })
+    fetchData()
+  } catch (err) { fetchData() }
+}
+
+
+
+let counter = 0
 
 const createDoc = async () => {
-    if (!storage.value) return;
-    counter++;
-    try {
-        const response = await storage.value.post({
-            title: 'Document ' + counter,
-            content: 'Contenu du document : ' + words[Math.floor(Math.random() * words.length)],
-            likes: 0, 
-            attributes: {
-                creation_date: new Date().toISOString()
-            }
-        });
-        fetchData();
-        console.log('Document créé', response);
-    } catch (err) {
-        console.log('Erreur création document', err);
-    }
-};
-
-const deleteDoc = async (post: Post) => {
-    if (!storage.value) return;
-    try {
-        const response = await storage.value.remove(post);
-        fetchData();
-        console.log('Document supprimé', response);
-    } catch (err) {
-        console.log('Erreur suppression document', err);
-    }
-};
+  if (!storage.value) return
+  counter++
+  try {
+    await storage.value.post({
+      type: 'post',
+      title: 'Document ' + counter,
+      content: words[Math.floor(Math.random() * words.length)],
+      likes: 0,
+      attributes: { creation_date: new Date().toISOString() },
+    })
+    fetchData()
+  } catch (err) { console.log(err) }
+}
 
 const createMultipleDocs = async () => {
-    if (!storage.value) return;
-    const numToCreate = parseInt(batchSize.value.toString()) || 0;
-    
-    if (numToCreate > 0) {
-        const docs = [];
-        for(let i=0; i<numToCreate; i++) {
-            counter++;
-            docs.push({
-                title: 'Document ' + counter,
-                content: 'Contenu du document : ' + words[Math.floor(Math.random() * words.length)],
-                likes: 0,
-                attributes: {
-                    creation_date: new Date().toISOString()
-                }
-            });
-        }
-        try {
-            await storage.value.bulkDocs(docs);
-            fetchData();
-        } catch(err) {
-             console.log('Erreur création multiple', err);
-        }
+    if (!storage.value) return
+    const numToCreate = parseInt(batchSize.value.toString()) || 0
+    const docs = []
+    for (let i = 0; i < numToCreate; i++) {
+        counter++
+        docs.push({
+            type: 'post',
+            title: 'Doc Batch ' + counter,
+            content: 'Contenu batch',
+            likes: 0
+        })
     }
-};
+    await storage.value.bulkDocs(docs)
+    fetchData()
+}
 
 const updateDoc = async (post: Post) => {
-    if (!storage.value) return;
-    const newContent = 'Contenu du document : ' + words[Math.floor(Math.random() * words.length)] + ' (modifié)';
-    const updatedPost = {
-        ...post,
-        content: newContent,
-        _rev: post._rev 
-    };
-    
-    try {
-        const response = await storage.value.put(updatedPost);
-        fetchData(); 
-        console.log('Document mis à jour', response);
-    } catch (err) {
-        if ((err as PouchDB.Core.Error).name === 'conflict') {
-             console.error('Erreur de conflit lors de la mise à jour. Récupération des dernières données...', err);
-             fetchData(); 
-        } else {
-            console.log('Erreur de mise à jour', err);
-        }
-    }
-};
+  if (!storage.value) return
+  try {
+    await storage.value.put({
+      ...post,
+      content: words[Math.floor(Math.random() * words.length)] + ' (modifié)',
+      _rev: post._rev,
+    })
+    fetchData()
+  } catch (err) { fetchData() }
+}
 
+const addLike = async (post: Post) => {
+  if (!storage.value) return
+  try {
+    await storage.value.put({
+      ...post,
+      likes: (post.likes || 0) + 1,
+      _rev: post._rev,
+    })
+    fetchData()
+  } catch (err) { fetchData() }
+}
+
+const deleteEntity = async (doc: Post | Plat) => {
+  if (!storage.value) return
+  try {
+    await storage.value.remove(doc as any)
+    fetchData()
+  } catch (err) { console.log(err) }
+}
 </script>
 
 <template>
-    <div id="app-container">
-        <h1>Gestion des Documents (PouchDB Sync)</h1>
-        
-        <div class="header-actions">
-            <div class="status-toggle">
-                <label class="switch">
-                    <input type="checkbox" :checked="isOnline" @click="toggle" /><span class="slider round"></span>
-                </label>
-                <label :class="isOnline ? 'status-online' : 'status-offline'">
-                    {{ isOnline ? 'Online (Synchro Active)' : 'Offline (Synchro Arrêtée)' }}
-                </label>
-            </div>
-            
-            <button @click="createDoc" class="btn-primary">Ajouter un document</button>
-        </div>
-        
-        <div class="search-container">
-            <input type="text" placeholder="Rechercher par contenu (Entrée)" @keyup.enter="search" class="search" />
-            <button @click="searchReset" class="btn-reset">X</button>
-        </div>
+  <div id="app-container">
+    <h1>Gestion PouchDB</h1>
 
-        <div class="document-list">
-            <article v-for="post in postsData" :key="post._id">
+    <div class="header-actions">
+      <div class="status-toggle">
+        <label class="switch">
+          <input type="checkbox" :checked="isOnline" @click="toggle" />
+          <span class="slider round"></span>
+        </label>
+        <label :class="isOnline ? 'status-online' : 'status-offline'">
+          {{ isOnline ? 'Online' : 'Offline' }}
+        </label>
+      </div>
+
+      <div class="batch-actions">
+        <input type="number" v-model="batchSize" min="1" class="input-batch" />
+        <button @click="createMultipleDocs" class="btn-secondary">Batch Docs</button>
+        <button @click="createMultiplePlats" class="btn-batch-plat">Batch Plats 🍲</button>
+      </div>
+      
+      <div class="single-actions">
+        <button @click="createDoc" class="btn-primary">Ajouter Document</button>
+        <button @click="createPlat" class="btn-plat">Ajouter Plat 🍲</button>
+      </div>
+    </div>
+
+    <div class="search-container">
+      <input type="text" placeholder="Chercher (Plat, Client, Ingrédient, Document...)" @keyup.enter="search" class="search" />
+      <button @click="searchReset" class="btn-reset">X</button>
+    </div>
+
+    <div class="lists-container">
+        
+        <div class="column">
+            <h3>📑 Documents ({{ postsData.length }})</h3>
+            <div class="document-list">
+              <article v-for="post in postsData" :key="post._id" class="card-doc">
                 <div class="article-content">
-                    <h2>
-                        {{ post.title }}
-                        <span class="conflicts" v-if="post._conflicts">Attention, conflits !</span>
-                    </h2>
+                    <h4>{{ post.title }} <span class="conflicts" v-if="post._conflicts">!</span></h4>
                     <p>{{ post.content }}</p>
                 </div>
-
                 <div class="article-actions">
-                    <button @click="addLike(post)" class="btn-like">
-                        ❤️ {{ post.likes || 0 }}
-                    </button>
-
-                    <button @click="updateDoc(post)" class="btn-update">Modifier</button>
-                    <button @click="deleteDoc(post)" class="btn-delete">Effacer</button>
+                    <button @click="addLike(post)" class="btn-like">❤️ {{ post.likes || 0 }}</button>
+                    <button @click="updateDoc(post)" class="btn-update">📝</button>
+                    <button @click="deleteEntity(post)" class="btn-delete">X</button>
                 </div>
-            </article>
-            <p v-if="postsData.length === 0" class="empty-message">Aucun document trouvé.</p>
+              </article>
+              <p v-if="postsData.length === 0" class="empty">Aucun document.</p>
+            </div>
         </div>
+
+        <div class="column">
+            <h3>🍲 Commandes ({{ platsData.length }})</h3>
+            <div class="document-list">
+              <article v-for="plat in platsData" :key="plat._id" class="card-plat">
+                <div class="article-content">
+                    <h4>{{ plat.nom }} <small>pour {{ plat.client || '?' }}</small></h4>
+                    <p>Ingrédient: <strong>{{ plat.ingredients }}</strong></p>
+                    <p class="price">{{ plat.prix }} €</p>
+                </div>
+                <div class="article-actions">
+                    <button @click="addLikePlat(plat)" class="btn-like">❤️ {{ plat.likes || 0 }}</button>
+                    <button @click="updatePlat(plat)" class="btn-update-plat">🎲 Change</button>
+                    <button @click="deleteEntity(plat)" class="btn-delete">X</button>
+                </div>
+              </article>
+              <p v-if="platsData.length === 0" class="empty">Aucun plat.</p>
+            </div>
+        </div>
+
     </div>
+  </div>
 </template>
 
 <style scoped>
-/* Conteneur principal */
 #app-container {
-    max-width: 900px;
-    margin: 0 auto;
-    background-color: #ffffff;
-    padding: 2.5rem;
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-    border-radius: 1rem;
-    font-family: 'Inter', sans-serif;
+  max-width: 1000px;
+  margin: 0 auto;
+  background-color: #fff;
+  padding: 2rem;
+  border-radius: 1rem;
+  font-family: 'Inter', sans-serif;
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
 }
 
-/* En-tête */
-h1 {
-    font-size: 2.25rem;
-    font-weight: 800;
-    color: #1f2937;
-    border-bottom: 2px solid #e5e7eb;
-    padding-bottom: 0.5rem;
-    margin-bottom: 1.5rem;
+h1 { margin-bottom: 1.5rem; color: #1f2937; }
+h3 { color: #4b5563; border-bottom: 2px solid #e5e7eb; padding-bottom: 0.5rem; }
+h4 small { font-weight: normal; font-size: 0.8em; color: #6b7280; margin-left: 5px; font-style: italic; }
+
+.lists-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
 }
 
-/* Actions du header (Toggle et Ajouter) */
-.header-actions {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1.5rem;
-    gap: 1rem;
-    flex-wrap: wrap;
+@media (max-width: 768px) {
+    .lists-container { grid-template-columns: 1fr; }
 }
 
-/* Toggle et statut */
-.status-toggle {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 1rem;
-    border-radius: 0.75rem;
-    background-color: #f3f4f6;
-    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05);
-}
-.status-online {
-    color: #059669; /* Green */
-    font-weight: 600;
-}
-.status-offline {
-    color: #dc2626; /* Red */
-    font-weight: 600;
-}
+.header-actions { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; margin-bottom: 1.5rem; }
+.batch-actions { display: flex; gap: 0.5rem; }
+.single-actions { display: flex; gap: 0.5rem; margin-left: auto; }
 
-/* Recherche */
-.search-container {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-    margin-bottom: 1.5rem;
-}
-.search {
-    flex-grow: 1;
-    padding: 0.75rem 1rem;
-    border: 2px solid #d1d5db;
+.input-batch { width: 60px; padding: 0.5rem; border: 1px solid #ccc; border-radius: 0.5rem; }
+
+button { cursor: pointer; border: none; border-radius: 0.5rem; font-weight: 600; padding: 0.5rem 1rem; transition: 0.2s; }
+.btn-primary { background: #2563eb; color: white; }
+.btn-secondary { background: #6366f1; color: white; }
+.btn-plat { background: #ea580c; color: white; }
+.btn-plat:hover { background: #c2410c; }
+.btn-batch-plat { background: #d97706; color: white; }
+.btn-batch-plat:hover { background: #b45309; }
+
+.btn-delete { background: #ef4444; color: white; padding: 0.5rem; }
+.btn-update { background: #f59e0b; color: white; padding: 0.5rem; }
+.btn-like { background: #ec4899; color: white; padding: 0.5rem;}
+.btn-update-plat { background: #10b981; color: white; padding: 0.5rem; } 
+
+.card-doc {
+    background: #f3f4f6;
+    border-left: 5px solid #2563eb;
+    padding: 1rem;
+    margin-bottom: 1rem;
     border-radius: 0.5rem;
-    transition: all 0.2s;
-}
-.search:focus {
-    outline: none;
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+    display: flex; justify-content: space-between; align-items: center;
 }
 
-/* Boutons génériques */
-button {
-    cursor: pointer;
-    border: none;
+.card-plat {
+    background: #fff7ed;
+    border-left: 5px solid #ea580c;
+    padding: 1rem;
+    margin-bottom: 1rem;
     border-radius: 0.5rem;
-    transition: all 0.2s ease-in-out;
-    font-weight: 600;
-    font-size: 0.95rem;
-}
-.btn-primary {
-    background-color: #2563eb;
-    color: white;
-    padding: 0.75rem 1.5rem;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-}
-.btn-primary:hover {
-    background-color: #1d4ed8;
-    box-shadow: 0 6px 10px -1px rgba(0, 0, 0, 0.15);
-}
-.btn-reset {
-    background-color: #e5e7eb;
-    color: #4b5563;
-    padding: 0.75rem;
-    width: 40px;
-    height: 40px;
-    line-height: 1;
-    font-size: 1rem;
-}
-.btn-reset:hover {
-    background-color: #d1d5db;
+    display: flex; justify-content: space-between; align-items: center;
+    border: 1px solid #fed7aa;
 }
 
-/* Liste des documents */
-.document-list {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    margin-top: 1rem;
-}
-article {
-    background-color: #f9fafb;
-    padding: 1.5rem;
-    border-radius: 0.75rem;
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
-    border: 1px solid #e5e7eb;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 1rem;
-}
+.price { font-weight: bold; color: #15803d; font-size: 1.1rem; }
+.article-actions { display: flex; gap: 0.5rem; }
+.empty { font-style: italic; color: #9ca3af; text-align: center; margin-top: 1rem; }
 
-.article-content {
-    flex-grow: 5;
-}
-article h2 {
-    font-size: 1.125rem;
-    font-weight: 700;
-    color: #374151;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.25rem;
-}
-article p {
-    color: #6b7280;
-    font-style: italic;
-    margin: 0;
-}
-.article-actions {
-    display: flex;
-    flex-shrink: 0;
-    gap: 0.5rem;
-}
-.btn-update {
-    background-color: #f59e0b;
-    color: white;
-    padding: 0.5rem 1rem;
-}
-.btn-update:hover {
-    background-color: #d97706;
-}
-.btn-delete {
-    background-color: #ef4444;
-    color: white;
-    padding: 0.5rem 1rem;
-}
-.btn-delete:hover {
-    background-color: #dc2626;
-}
+.switch { position: relative; display: inline-block; width: 44px; height: 24px; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 34px; }
+.slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
+input:checked + .slider { background-color: #10b981; }
+input:checked + .slider:before { transform: translateX(20px); }
+.status-online { color: #059669; font-weight: bold; margin-left: 0.5rem;}
+.status-offline { color: #dc2626; font-weight: bold; margin-left: 0.5rem;}
 
-/* Style du bouton Like */
-.btn-like {
- background-color: #ef476f;
- color: white;
- padding: 0.5rem 1rem;
- min-width: 80px;
-}
-.btn-like:hover {
- background-color: #d8315b;
-}
-.btn-like:active {
- background-color: #be123c; /* Petit effet visuel au clic */
- transform: scale(0.95);
-}
-
-/* Conflicts */
-.conflicts {
-    color: #b91c1c; 
-    background-color: #fee2e2;
-    padding: 0.25rem 0.5rem;
-    border-radius: 9999px;
-    font-weight: 500;
-    font-style: normal;
-    font-size: 0.75rem;
-    animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.7; }
-}
-
-/* Switch (molette) */
-.switch {
-    position: relative;
-    display: inline-block;
-    width: 44px;
-    height: 24px;
-    vertical-align: middle;
-}
-.switch input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-}
-.slider {
-    position: absolute;
-    cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: #ccc;
-    transition: 0.4s;
-    border-radius: 24px;
-}
-.slider:before {
-    position: absolute;
-    content: '';
-    height: 16px;
-    width: 16px;
-    left: 4px;
-    bottom: 4px;
-    background-color: white;
-    transition: 0.4s;
-    border-radius: 50%;
-}
-input:checked + .slider {
-    background-color: #10b981;
-}
-input:focus + .slider {
-    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.5);
-}
-input:checked + .slider:before {
-    transform: translateX(20px);
-}
-.empty-message {
-    text-align: center;
-    padding: 2rem 0;
-    color: #9ca3af;
-    font-style: italic;
-}
+.search-container { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+.search { flex-grow: 1; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 0.5rem; }
 </style>
